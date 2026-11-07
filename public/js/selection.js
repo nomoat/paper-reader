@@ -207,8 +207,16 @@ export function openComment(x, focus) {
 }
 
 // Streams an AI answer into a card body, with a blinking caret while streaming.
+// Copy button for a card's finished answer, first in its footer.
+function addCopy(card, text) {
+  card.foot.querySelector(".copy-ans")?.remove();
+  const b = h(`<button class="btn ghost copy-ans" title="Copy">${icon("copy", 14)} Copy</button>`);
+  b.onclick = () => { navigator.clipboard.writeText(text); toast("Copied"); };
+  card.foot.prepend(b);
+}
+
 export async function streamInto(card, task, body) {
-  const out = h(`<div class="md streaming"><div class="skeleton"><i></i><i></i><i style="width:60%"></i></div></div>`);
+  const out = h(`<div class="md answer streaming"><div class="skeleton"><i></i><i></i><i style="width:60%"></i></div></div>`);
   card.body.append(out);
   const ctrl = new AbortController();
   const prevClose = card.onClose;
@@ -216,11 +224,7 @@ export async function streamInto(card, task, body) {
   try {
     const text = await stream(task, body, (t) => { if (t) out.innerHTML = md(t); }, { signal: ctrl.signal });
     out.classList.remove("streaming");
-    if (text) {
-      const b = h(`<button class="btn ghost" title="Copy">${icon("copy", 14)} Copy</button>`);
-      b.onclick = () => { navigator.clipboard.writeText(text); toast("Copied"); };
-      card.foot.prepend(b);
-    }
+    if (text) addCopy(card, text);
     return text;
   } catch (e) {
     if (e.name !== "AbortError") out.innerHTML = `<p class="error">${esc(e.message)}</p>`;
@@ -229,18 +233,48 @@ export async function streamInto(card, task, body) {
   }
 }
 
+// Explanations are kept per user and paper (app.state.explanations). Asking again about the same
+// thing (`fid`) in the same language shows the kept answer instead of calling the AI; Regenerate
+// asks again and replaces it. `body()` builds the request only when one is needed.
+export async function explainOnce(card, { fid, task, body, entry }) {
+  const lang = app.settings.lang;
+  const regen = h(`<button class="icon-btn" title="Regenerate">${icon("refresh", 15)}</button>`);
+  const run = async (regenerate) => {
+    regen.disabled = true;
+    card.body.querySelector(".answer")?.remove();
+    const answer = await streamInto(card, task, { ...(await body()), lang, regenerate });
+    regen.disabled = false;
+    if (!answer) return;
+    const kept = app.state.explanations.find((x) => x.fid === fid && x.lang === lang);
+    if (kept) Object.assign(kept, { answer, ts: Date.now() });
+    else app.state.explanations.unshift({ id: uid(), ...entry, fid, lang, answer, ts: Date.now() });
+    saveState();
+  };
+  regen.onclick = () => run(true);
+  card.foot.append(regen);
+  const kept = app.state.explanations.find((x) => x.fid === fid && x.lang === lang);
+  if (!kept) return run(false);
+  const out = h(`<div class="md answer"></div>`);
+  out.innerHTML = md(kept.answer);
+  card.body.append(out);
+  addCopy(card, kept.answer);
+}
+
 export async function explainText(sel) {
   const card = openCard({ anchor: sel.anchor, title: "Explain", iconName: "lightbulb", cls: "explain-card" });
   card.body.innerHTML = `<blockquote class="quote">${esc(sel.text.slice(0, 400))}${sel.text.length > 400 ? "…" : ""}</blockquote>`;
   card.foot.innerHTML = `<button class="btn ghost" data-act="ask">${icon("bot", 14)} Follow up</button><span class="grow"></span><button class="btn ghost" data-act="hl">${icon("highlighter", 14)} Highlight</button>`;
   card.foot.querySelector("[data-act=ask]").onclick = () => { closeCard(card); askWithQuote(sel.text, sel.anchor.page); };
   card.foot.querySelector("[data-act=hl]").onclick = (e) => { addHighlight(sel, "yellow"); e.currentTarget.disabled = true; };
-  await pageText(sel.anchor.page);
-  const answer = await streamInto(card, "explain", { key: app.key, lang: app.settings.lang, selection: sel.text, context: sel.context || contextAround(sel.anchor.page, sel.text), page: sel.anchor.page + 1 });
-  if (answer) {
-    app.state.explanations.unshift({ id: uid(), kind: "text", quote: sel.text, answer, page: sel.anchor.page, y: sel.anchor.y0 ?? sel.anchor.y, ts: Date.now() });
-    saveState();
-  }
+  const page = sel.anchor.page;
+  await explainOnce(card, {
+    fid: `text:${page}:${sel.text}`, task: "explain",
+    entry: { kind: "text", quote: sel.text, page, y: sel.anchor.y0 ?? sel.anchor.y },
+    body: async () => {
+      await pageText(page);
+      return { key: app.key, selection: sel.text, context: sel.context || contextAround(page, sel.text), page: page + 1 };
+    },
+  });
 }
 
 export async function translateText(sel) {

@@ -1,8 +1,8 @@
 // Figure / table / equation overlays. Each rendered page image goes to Gemini once for layout
 // detection (cached server-side); hovering a detected region shows Explain / Copy / LaTeX tools.
-import { app, pageInfo, pageView, addPainter, repaint, openCard, contextAround, pageText, saveState } from "./app.js";
-import { h, icon, aiJson, stream, toast, uid } from "./util.js";
-import { streamInto } from "./selection.js";
+import { app, pageInfo, pageView, addPainter, repaint, openCard, contextAround, pageText } from "./app.js";
+import { h, icon, aiJson, stream, toast } from "./util.js";
+import { explainOnce } from "./selection.js";
 import { me } from "./auth.js";
 
 const queue = [];
@@ -130,13 +130,15 @@ async function figureAction(i, f, act) {
   const thumb = h(`<img class="fig-thumb" alt="">`);
   thumb.src = c.toDataURL("image/png");
   card.body.append(thumb);
-  await pageText(i);
-  const answer = await streamInto(card, "explain-image", {
-    key: app.key, lang: app.settings.lang, kind: f.label, page: i + 1,
-    image: c.toDataURL("image/jpeg", 0.85), context: contextAround(i, f.caption || "", 900),
+  // A figure is known by its page and box: the layout of a page is cached on the server, so the
+  // box is the same every time. A changed layout gives a new box, so never another figure's answer.
+  const box = [f.top, f.left, f.bottom, f.right].map((v) => Math.round(v * 1000)).join(",");
+  await explainOnce(card, {
+    fid: `fig:${i}:${box}`, task: "explain-image",
+    entry: { kind: f.label, quote: f.caption || `${LABEL[f.label]} on page ${i + 1}`, page: i, y: f.top },
+    body: async () => {
+      await pageText(i);
+      return { key: app.key, kind: f.label, page: i + 1, image: c.toDataURL("image/jpeg", 0.85), context: contextAround(i, f.caption || "", 900) };
+    },
   });
-  if (answer) {
-    app.state.explanations.unshift({ id: uid(), kind: f.label, quote: f.caption || `${LABEL[f.label]} on page ${i + 1}`, answer, page: i, y: f.top, ts: Date.now() });
-    saveState();
-  }
 }
