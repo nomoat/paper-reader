@@ -4,8 +4,8 @@ import { createHandler } from "../lib/core.js";
 import { createVerifier } from "../lib/auth.js";
 
 const r2Store = (bucket) => ({
-  async get(p) {
-    const o = await bucket.get(p);
+  async get(p, range) {
+    const o = await bucket.get(p, range ? { range } : undefined);
     return o && { size: o.size, body: o.body, text: () => o.text(), arrayBuffer: () => o.arrayBuffer() };
   },
   put: (p, data) => bucket.put(p, data),

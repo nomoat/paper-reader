@@ -30,11 +30,12 @@ function loadKey() {
 }
 
 const diskStore = {
-  async get(p) {
+  async get(p, range) {
     const file = path.join(DATA, p);
     try {
       const st = await fsp.stat(file);
-      return { size: st.size, body: Readable.toWeb(fs.createReadStream(file)), text: () => fsp.readFile(file, "utf8"), arrayBuffer: () => fsp.readFile(file) };
+      const part = range && { start: range.offset, ...(range.length ? { end: range.offset + range.length - 1 } : {}) };
+      return { size: st.size, body: Readable.toWeb(fs.createReadStream(file, part)), text: () => fsp.readFile(file, "utf8"), arrayBuffer: () => fsp.readFile(file) };
     } catch { return null; }
   },
   async put(p, data) {

@@ -11,6 +11,7 @@ import { translatePage, setTranslate, resetTranslations } from "./translate.js";
 import { sideOn, blockAt, setBlockHover } from "./inline.js";
 import { requireSignIn, authHeaders, me, showPaywall } from "./auth.js";
 import { initExport, editPersona } from "./extras.js";
+import { keptPdf, keepPdf } from "./pdfcache.js";
 
 globalThis.pdfjsLib = pdfjsLib;
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/build/pdf.worker.mjs";
@@ -340,9 +341,9 @@ async function boot() {
   renderInfo();
 
   status.textContent = "Downloading PDF…";
+  const kept = await keptPdf(app.key);
   const task = pdfjsLib.getDocument({
-    url: `/api/pdf/${app.key}`,
-    httpHeaders: await authHeaders(),
+    ...(kept ? { data: kept } : { url: `/api/pdf/${app.key}`, httpHeaders: await authHeaders(), rangeChunkSize: 1 << 19 }),
     cMapUrl: "/vendor/pdfjs/cmaps/", cMapPacked: true,
     standardFontDataUrl: "/vendor/pdfjs/standard_fonts/",
     wasmUrl: "/vendor/pdfjs/wasm/",
@@ -353,6 +354,7 @@ async function boot() {
   catch (e) { status.innerHTML = `Could not load this PDF: ${esc(e.message)}. <a href="/library">Back</a>`; return; }
   status.remove();
   app.pdf = pdf;
+  if (!kept) pdf.getData().then((d) => keepPdf(app.key, d), () => {});
 
   const eventBus = new EventBus();
   const linkService = new PDFLinkService({ eventBus, externalLinkTarget: LinkTarget.BLANK });
